@@ -13,8 +13,8 @@ test-drive shows you what it *does*, on your own request, before anything touche
    tools/hooks, and what the entry's own disclosure says about network, shell and storage.
 3. **It test-drives in a throwaway Hermes.** After you approve, it creates a temporary `HERMES_HOME`,
    installs the candidate there with `hermes plugins install`, runs your *original* request once with
-   `hermes chat -q`, reads which tools were called, stops the sandbox's runtime and deletes the folder.
-   You get a before/after, with evidence of whether the plugin's own tools were actually used.
+   `hermes chat -q`, matches exported session evidence to that run, and attempts to stop the sandbox's runtime and delete the folder.
+   You get a before/after with evidence of tool use when the session can be identified; otherwise evidence is unavailable.
 4. **You decide.** `/testdrive keep <name>` goes through Hermes's own installer and its consent
    prompts. `/testdrive discard <name>` forgets it. `/testdrive history` keeps receipts.
 
@@ -39,14 +39,14 @@ OpenAI-compatible endpoint, …). The sandbox reuses your model settings.
 | `/testdrive run <plugin> [-- <request>]` | Asks you to approve, then test-drives it. The default request is the one Hermes just failed |
 | `/testdrive run <plugin> --yes [-- <request>]` | Same, approved in one step (you typed the yes) |
 | `/testdrive card <plugin>` | Trust card for one plugin |
-| `/testdrive keep <plugin>` | Install it for real through Hermes's installer (approval card on Desktop, otherwise the exact `hermes plugins install` command) |
+| `/testdrive keep <plugin>` | Install through Hermes's installer (Desktop uses its catalog by name; CLI fallback uses the current catalog pin) |
 | `/testdrive discard <plugin>` | Forget it |
 | `/testdrive history` | Receipts: what was driven, the pin, whether its tools were used, time, your decision |
 
 | Tool (for the agent) | What it does |
 |---|---|
 | `test_drive_find(need)` | Read-only catalog match with trust cards |
-| `test_drive_run(plugin, request)` | The test drive. **Every call goes through Hermes's approval gate** (a `pre_tool_call` hook escalates it) |
+| `test_drive_run(plugin, request)` | Requests approval before a test drive |
 | `test_drive_keep(plugin, decision)` | Hand a kept plugin to Hermes's installer, or record a discard |
 
 ## Example (real run, Hermes main @ fb5d314, `deepseek/deepseek-v4-flash`)
@@ -89,21 +89,20 @@ suggested discarding it.
 |---|---|---|
 | Config | `config.yaml` with only your `model:` block (plus the named `providers:` entry it points at) and `approvals: {single_query_mode: deny, …}` | n/a |
 | Baseline (optional) | `hermes chat -q "<request>" -Q` | `run_timeout` (120 s) |
-| Install | `hermes plugins install <name> --enable --yes-deps` (catalog pin, install scanner and dependency admission run as usual) | `install_timeout` (240 s) |
+| Install | `hermes plugins install <repo>[#subdir] --ref <sha> --enable --yes-deps` (exact source selected for execution, scanner and dependency admission) | `install_timeout` (240 s) |
 | Run | `hermes chat -q "<request>" -Q` | `run_timeout` (120 s) |
-| Evidence | `hermes sessions export --format jsonl -` → tool names per run | 60 s |
-| Cleanup (always) | `hermes gateway stop`, pid-file check (SIGTERM/SIGKILL only for a gateway whose pid file names this sandbox), `rmtree` | 30 s |
+| Evidence | `hermes sessions export --format jsonl -` → tool names matched by session ID; unavailable if no unique match | 60 s |
+| Cleanup (attempted) | `hermes gateway stop`, pid-file check, `rmtree`; failures are reported | 30 s for stop |
 
-* **No secrets are copied.** The sandbox gets no memory, sessions, skills, other plugins, `.env` or
+* **Limited credential access.** The sandbox gets no memory, sessions, skills, other plugins, `.env` or
   `auth.json`. The child process gets a least-privilege environment: system basics (PATH, locale,
   proxy and CA settings) plus only the env vars your model route needs and the candidate's declared
   `requires_env` keys, read through `agent.secret_scope.get_secret`. No `HERMES_*` variable leaks in,
-  so the child never attaches to your gateway. The approval prompt lists which keys it will pass.
-* **No approvals are bypassed.** The child runs `chat -q` (single-query), not `-z`, so a dangerous
-  command inside it is **denied**, never auto-approved. The drive itself needs your yes: Hermes's
-  approval gate for the tool (fails closed on deny, timeout, cron and other unattended runs), or
-  `ask_choice` / `--yes` for the slash command. An unanswered question times out cleanly and
-  nothing is downloaded.
+  so the child never attaches to your gateway. The slash-command approval picker lists the environment variable names it will pass.
+* **Approvals.** The child runs `chat -q` (single-query), not `-z`, so a dangerous command inside it
+  is denied rather than auto-approved. Slash commands use `ask_choice` or an explicit `--yes`.
+  Agent calls use Hermes's approval gate; the hook loads the catalog and shows the full source
+  and pin, and blocks if it cannot verify them. Catalog loading can fall back to a stale cache.
 * **Timeouts are hard.** On POSIX each child runs in its own session and the whole process group is
   killed on timeout; cleanup still runs.
 * **Missing keys skip the run.** If the candidate declares `requires_env` keys you don't have,
@@ -139,15 +138,15 @@ suggested discarding it.
   your active model.
 * **Shell / subprocess.** Each drive spawns child `hermes` CLI processes (`plugins install`,
   `chat -q`, `sessions export`, `gateway stop`). `hermes chat -q` starts a per-sandbox Hermes runtime
-  process, which test-drive stops before deleting the sandbox. test-drive runs no other commands.
+  process, which test-drive attempts to stop before removing the sandbox. test-drive runs no other commands.
 * **Files.** It creates temporary directories named `hermes-testdrive-*` in the system temp dir and
-  deletes them when the drive ends. It stores the catalog cache, the last noticed gap per session,
+  attempts to delete them when the drive ends, reporting failure. It stores the catalog cache, the last noticed gap per session,
   and up to 50 drive receipts (plugin, pin, request excerpt, before/after excerpts, tools called,
   timing, decision) in its plugin-data folder.
 * **Credentials.** It reads only the env vars your model route needs and the candidate's declared
-  `requires_env`, through `agent.secret_scope`, and only to pass them to the sandbox child of a
-  drive you approved. If your model block has a literal `api_key`, that block is written into
-  the sandbox's 0600 `config.yaml` for the run and deleted with it. It never reads `.env`,
+  `requires_env`, through `agent.secret_scope`, to check availability and pass them to the sandbox child of a
+  drive you approved. The full selected model and matching provider configuration blocks are written into the sandbox's
+  0600 `config.yaml` for the run; either block can contain a literal API key. Cleanup is attempted afterwards. It never reads `.env`,
   `auth.json` or token files.
 * **Background work.** A short-lived thread warms the catalog cache after the first message of a
   session, so a nudge never waits on the network. There are no long-running processes.
@@ -158,13 +157,14 @@ suggested discarding it.
 ## Limits
 
 * A test drive takes roughly 30–90 s and spends model tokens: one run, or two with a baseline.
-* Each drive uses about 0.5 GB of temp disk while it runs (Hermes builds the sandbox's own runtime); it is deleted afterwards.
-* On Hermes builds whose bundled catalog copy predates a newer entry (e.g. v0.22.7), test-drive installs the same pinned sha by URL (`--ref <sha>`).
+* Each drive uses about 0.5 GB of temp disk while it runs (Hermes builds the sandbox's own runtime); cleanup is attempted afterwards.
+* Keep uses Hermes's catalog by name on Desktop, or the current catalog pin in the CLI fallback. Either may differ from the pin in a past test-drive receipt.
+* Test-drive installs the catalog source selected for execution by exact URL and commit, including any subdirectory. Hermes treats URL installs as custom sources: its scanner and dependency admission still apply, but a caution verdict that a curated catalog install might accept can block the drive.
 * It proves the plugin works **for your request, in a clean profile**. Plugins that need a
   messaging platform, the Desktop app, hardware, OAuth sign-ins or your existing data can install
   but can't show their value there. Plugins that need keys you don't have are skipped.
 * The sandbox is an isolated Hermes home, **not an OS sandbox**: the candidate's code runs as your
-  user, the same as a real install, but inside a throwaway profile that's deleted afterwards. Read
+  user, the same as a real install, but inside a throwaway profile that test-drive attempts to delete afterwards. Read
   the trust card before you approve.
 * Gap detection is heuristic, tuned for English replies. It errs toward staying quiet.
 * `keep` outside the Desktop app gives you the `hermes plugins install` command to run, so Hermes's

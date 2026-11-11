@@ -332,10 +332,10 @@ class TestDrive:
 
     def last_gap(self, session_id: str = "") -> Optional[dict[str, Any]]:
         by_session = self._state_get("last_gaps", {})
-        if isinstance(by_session, dict) and session_id and isinstance(by_session.get(session_id), dict):
-            return by_session[session_id]
-        rec = self._state_get("last_gap", None)
-        return rec if isinstance(rec, dict) else None
+        if session_id:
+            return by_session.get(session_id) if isinstance(by_session, dict) and isinstance(by_session.get(session_id), dict) else None
+        # Never reuse another session's request when the caller has no session identity.
+        return None
 
     # receipts ----------------------------------------------------------------------------------------
     def receipts(self) -> list[dict[str, Any]]:
@@ -365,7 +365,8 @@ class TestDrive:
         for r in reversed(items):
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(r.get("at", 0)))
             used = r.get("plugin_tools_used")
-            verdict = {"ok": "used its tools ✓" if used else "ran, did not use its tools",
+            verdict = {"ok": ("tool-use evidence unavailable" if used is None else
+                              "used its tools ✓" if used else "ran, did not use its tools"),
                        "skipped_keys": f"skipped: missing {', '.join(r.get('missing_env') or [])}",
                        "denied": "not approved", "failed": f"failed: {_excerpt(r.get('error', ''), 80)}"}.get(
                 r.get("status"), r.get("status", "?"))
@@ -430,6 +431,8 @@ class TestDrive:
             return {"error": f"`{name}` is not in the plugin catalog. Search with `/testdrive <need>`."}
         if cat.is_removed(entry):
             return {"error": f"`{name}` was removed from the catalog; test-drive will not run it."}
+        if not sandbox.valid_source(entry.repo, entry.sha, entry.subdir):
+            return {"error": f"`{name}` has an invalid catalog source, commit SHA, or subdirectory; refusing install."}
         if entry.name == PLUGIN_ID:
             return {"error": "test-drive cannot test-drive itself."}
         gap = self.last_gap(session_id) or {}
@@ -462,7 +465,7 @@ class TestDrive:
         keys = f" It gets these keys: {', '.join(prep.get('passed') or []) or 'none'}."
         return (f"Test-drive {e.name} ({e.tier}, {e.repo} @ {e.sha[:12]}): download it and its Python dependencies "
                 f"into a throwaway Hermes home, run your request once there with your model "
-                f"(Hermes child process, shell commands denied, {self.setting('run_timeout')}s limit), then delete "
+                f"(Hermes child process, dangerous commands denied, {self.setting('run_timeout')}s limit), then delete "
                 f"everything.{keys}")
 
     def run_drive(self, prep: dict[str, Any]) -> dict[str, Any]:
@@ -493,15 +496,16 @@ class TestDrive:
             seconds = round(self._clock() - started, 1)
         finally:
             self._drive_lock.release()
-        used = [t for t in (outcome.with_plugin.tools_called if outcome.with_plugin else []) if t in e.tools]
+        evidence_available = bool(outcome.with_plugin and outcome.with_plugin.evidence_available)
+        used = [t for t in (outcome.with_plugin.tools_called if evidence_available else []) if t in e.tools]
         status = "ok" if outcome.with_plugin and outcome.with_plugin.ok else "failed"
         error = outcome.error or (outcome.with_plugin.error if outcome.with_plugin else "")
         receipt.update(status=status, seconds=seconds, error=_excerpt(error, 300),
-                       plugin_tools_used=bool(used), tools_called=outcome.with_plugin.tools_called if outcome.with_plugin else [],
+                       plugin_tools_used=bool(used) if evidence_available else None,
+                       tools_called=outcome.with_plugin.tools_called if evidence_available else None,
                        before=_excerpt(failure or (outcome.baseline.output if outcome.baseline else ""), 300),
                        after=_excerpt(outcome.with_plugin.output if outcome.with_plugin else "", 300),
                        cleanup_ok=outcome.cleanup_ok, env_passed=prep.get("passed") or [],
-                       installed_by_url=any(n.startswith("installed by pinned URL") for n in outcome.cleanup_notes),
                        cost_usd=sum(r.cost_usd or 0 for r in (outcome.baseline, outcome.with_plugin) if r) or None)
         self._save_receipt(receipt)
         return {"status": status, "text": self.render(e, prep, outcome, used, failure, seconds), "receipt": receipt}
@@ -523,7 +527,9 @@ class TestDrive:
             w = o.with_plugin
             body = _excerpt(w.output, 900) if w.output else "(no reply)"
             lines.append(f"**With {e.name}:** {body}" if w.ok else f"**With {e.name}:** run failed: {w.error}\n{body}")
-            if used:
+            if not w.evidence_available:
+                lines.append("Evidence: tool-use evidence is unavailable for this run.")
+            elif used:
                 lines.append(f"Evidence: it called {', '.join(used)} (declared by {e.name}).")
             elif w.ok:
                 lines.append(f"Evidence: the reply did not call any of {e.name}'s tools"
@@ -531,14 +537,10 @@ class TestDrive:
         else:
             lines.append(f"**With {e.name}:** not run: {o.error or 'install did not finish'}")
         cost = sum(r.cost_usd or 0 for r in (o.baseline, o.with_plugin) if r)
-        cleanup = "deleted ✓" if o.cleanup_ok else "cleanup incomplete ⚠ " + "; ".join(
-            n for n in o.cleanup_notes if not n.startswith("installed by pinned URL"))
-        if any(n.startswith("installed by pinned URL") for n in o.cleanup_notes):
-            lines.append(f"Note: this Hermes's own catalog copy predates `{e.name}`, so the sandbox installed the same "
-                         f"pinned commit by URL ({e.sha[:12]}).")
+        cleanup = "deleted ✓" if o.cleanup_ok else "cleanup incomplete ⚠ " + "; ".join(o.cleanup_notes)
         lines.append(f"Sandbox: {cleanup} · {seconds:.0f}s total" + (f" · ~${cost:.4f} model spend" if cost else ""))
         if o.with_plugin is not None and o.with_plugin.ok:
-            if used or not e.tools:
+            if not o.with_plugin.evidence_available or used or not e.tools:
                 lines.append(f"\nKeep it? `/testdrive keep {e.name}` installs it into this profile through Hermes's "
                              f"normal install and consent prompts · `/testdrive discard {e.name}` forgets it.")
             else:
@@ -563,24 +565,24 @@ class TestDrive:
         except Exception as exc:
             result = json.dumps({"error": str(exc)})
         ok = _looks_installed(result)
-        by_url = any(r.get("plugin") == entry.name and r.get("installed_by_url") for r in self.receipts())
         self.set_decision(entry.name, "kept" if ok else "keep: install pending")
         if ok:
-            return f"Installed `{entry.name}` through Hermes's install card. {_excerpt(_text_of(result), 300)}"
-        command = (f"hermes plugins install {entry.repo} --ref {entry.sha}" if by_url and entry.repo and not entry.subdir
-                   else f"hermes plugins install {entry.name}")
-        why = (" (this Hermes's own catalog copy predates the entry, so this installs the same pinned commit by URL)"
-               if by_url else "")
+            return (f"Installed `{entry.name}` through Hermes's install card. Hermes selected it by name; "
+                    f"its catalog pin may differ from the test drive. {_excerpt(_text_of(result), 300)}")
+        import shlex
+        source = entry.repo + (f"#{entry.subdir}" if entry.subdir else "")
+        command = f"hermes plugins install {shlex.quote(source)} --ref {shlex.quote(entry.sha)}"
         return (f"To keep `{entry.name}`, install it with Hermes's own installer, which shows its consent and "
-                f"dependency prompts{why}:\n\n    {command}\n\n"
-                f"(pinned {entry.sha[:12]}; start a new session afterwards to load it). Marked as kept in "
+                f"dependency prompts:\n\n    {command}\n\n"
+                f"(current catalog pin {entry.sha[:12]} may differ from the test drive; start a new session afterwards to load it). Marked as pending in "
                 "`/testdrive history`.")
 
     def discard(self, name: str) -> str:
         rec = self.set_decision(name, "discarded")
         if not rec:
             return f"No test drive of `{name}` on record."
-        return f"Discarded `{name}`. Its sandbox was already deleted; nothing was installed in this profile."
+        cleanup = "Its temporary profile was deleted." if rec.get("cleanup_ok") else "Check the drive report for cleanup status."
+        return f"Discarded `{name}`. {cleanup}"
 
 
 def _text_of(result: Any) -> str:

@@ -8,6 +8,7 @@ discard it. Receipts of every drive stay in this plugin's state.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shlex
@@ -147,18 +148,22 @@ def register(ctx) -> None:
         if tool_name != "test_drive_run":
             return None
         name = str((args or {}).get("plugin") or "").strip() if isinstance(args, dict) else ""
-        entry = None
         try:
-            cat = td.store.cached()
-            entry = cat.get(name) if cat else None
+            cat = td.catalog(force=True)
+            entry = cat.get(name)
+            from .sandbox import valid_source
+            if not entry or cat.is_removed(entry) or not valid_source(entry.repo, entry.sha, entry.subdir):
+                raise ValueError("invalid catalog entry")
         except Exception:
-            entry = None
-        pin = f"{entry.repo} @ {entry.sha[:12]}" if entry else "its catalog pin"
+            return {"action": "block", "message": "Could not verify the catalog source and pin; try again or use /testdrive run."}
+        pin = f"{entry.repo} @ {entry.sha}" + (f" (subdir {entry.subdir})" if entry.subdir else "")
+        identity = json.dumps([entry.repo, entry.sha, entry.subdir], ensure_ascii=False, separators=(",", ":"))
+        rule_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return {"action": "approve",
                 "message": (f"test-drive wants to download {name or 'a plugin'} ({pin}) into a throwaway Hermes "
-                            "home and run your request there once (child Hermes process; dangerous commands "
-                            "denied; sandbox deleted afterwards)."),
-                "rule_key": f"test-drive:{name}@{entry.sha[:12] if entry else 'unpinned'}"}
+                            "home and run your request there (child Hermes process; dangerous commands "
+                            "denied; cleanup attempted afterwards)."),
+                "rule_key": f"test-drive:{name}@{rule_digest}"}
 
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("pre_llm_call", td.on_pre_llm_call)

@@ -6,8 +6,8 @@ Lifecycle (every step bounded by a timeout, cleanup always runs):
    the named provider it points at), plus approvals that DENY dangerous commands in single-query
    mode. Nothing else is copied: no memory, sessions, skills, .env, auth.json or other plugins.
 2. Optional baseline: ``hermes chat -q <request> -Q`` before the plugin exists.
-3. ``hermes plugins install <name> --enable --yes-deps``: the catalog pin, the install scanner and
-   dependency admission all run exactly as they do for a normal install, inside the sandbox home.
+3. ``hermes plugins install <repo>[#subdir] --ref <sha> --enable --yes-deps`` installs the approved
+   exact source with Hermes's scanner and dependency admission inside the sandbox home.
 4. ``hermes chat -q <request> -Q`` with the plugin. ``chat -q`` (not ``-z``) is single-query mode,
    so a dangerous command in the child is refused, never auto-approved.
 5. ``hermes sessions export --format jsonl -`` to read which tools each run called.
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -32,6 +33,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 PASS_ENV = (
     "PATH", "HOME", "USER", "LOGNAME", "USERNAME", "SHELL", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TZ",
@@ -83,6 +85,8 @@ class RunResult:
     timed_out: bool = False
     error: str = ""
     cost_usd: Optional[float] = None
+    session_id: str = ""
+    evidence_available: bool = False
 
 
 @dataclass
@@ -315,20 +319,23 @@ class Sandbox:
     # high level --------------------------------------------------------------------------------
     def chat(self, request: str, timeout: float) -> RunResult:
         step = self.run("chat -q", ["chat", "-q", request, "-Q"], timeout)
+        # -Q prints the session ID to stderr, outside the model's response.
+        ids = re.findall(r"(?m)^session_id: ([^\s]+)\s*$", step.stderr)
+        session_id = ids[0] if len(ids) == 1 else ""
         if step.timed_out:
             return RunResult(False, clean_output(step.stdout), seconds=step.seconds, timed_out=True,
-                             error=f"timed out after {timeout:.0f}s")
+                             error=f"timed out after {timeout:.0f}s", session_id=session_id)
         if step.rc != 0:
             return RunResult(False, clean_output(step.stdout), seconds=step.seconds,
-                             error=f"hermes exited {step.rc}: {step.tail(300)}")
-        return RunResult(True, clean_output(step.stdout), seconds=step.seconds)
+                             error=f"hermes exited {step.rc}: {step.tail(300)}", session_id=session_id)
+        return RunResult(True, clean_output(step.stdout), seconds=step.seconds, session_id=session_id)
 
     def install(self, name: str, timeout: float) -> Step:
         return self.run("plugins install", ["plugins", "install", name, "--enable", "--yes-deps"], timeout)
 
-    def install_pinned(self, repo: str, sha: str, timeout: float) -> Step:
-        """Same commit by URL, for a Hermes whose own catalog copy predates the entry."""
-        return self.run("plugins install", ["plugins", "install", repo, "--ref", sha, "--enable", "--yes-deps"], timeout)
+    def install_pinned(self, repo: str, sha: str, subdir: str, timeout: float) -> Step:
+        identifier = f"{repo}#{subdir}" if subdir else repo
+        return self.run("plugins install", ["plugins", "install", identifier, "--ref", sha, "--enable", "--yes-deps"], timeout)
 
     def sessions(self, timeout: float = 60) -> list[dict[str, Any]]:
         step = self.run("sessions export", ["sessions", "export", "--format", "jsonl", "--yes", "-"], timeout)
@@ -363,15 +370,56 @@ def session_tools(row: dict[str, Any]) -> tuple[list[str], Optional[float]]:
     for m in row.get("messages") or []:
         if isinstance(m, dict) and m.get("role") == "tool" and isinstance(m.get("tool_name"), str) and m["tool_name"]:
             tools.append(m["tool_name"])
-    names = row.get("tool_names")
-    if not tools and isinstance(names, list):
-        tools = [str(n) for n in names if isinstance(n, str)]
     cost = row.get("actual_cost_usd") if row.get("actual_cost_usd") is not None else row.get("estimated_cost_usd")
     cost = float(cost) if isinstance(cost, (int, float)) and cost > 0 else None
     return list(dict.fromkeys(tools)), cost
 
 
-NOT_IN_LOCAL_CATALOG = "is not in the hermes plugin catalog"
+def transcript_complete(row: dict[str, Any]) -> bool:
+    """Do not infer tool non-use from an incomplete or rotated transcript."""
+    messages = row.get("messages")
+    if not isinstance(messages, list) or not messages or row.get("parent_session_id"):
+        return False
+    if any(not isinstance(m, dict) or not isinstance(m.get("role"), str) for m in messages):
+        return False
+    roles = {m["role"] for m in messages}
+    if not {"user", "assistant"}.issubset(roles):
+        return False
+    count = row.get("message_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count != len(messages):
+        return False
+    if any(m["role"] == "tool" and (not isinstance(m.get("tool_name"), str) or not m["tool_name"])
+           for m in messages):
+        return False
+    tool_count = row.get("tool_call_count")
+    if (not isinstance(tool_count, int) or isinstance(tool_count, bool)
+            or tool_count != sum(m["role"] == "tool" for m in messages)):
+        return False
+    return True
+
+
+def valid_source(repo: str, sha: str, subdir: str) -> bool:
+    """Refuse ambiguous source identifiers before starting a baseline or installer."""
+    try:
+        url = urlsplit(repo)
+        if (not repo.startswith("https://") or url.scheme != "https" or not url.hostname
+                or url.username is not None or url.password is not None
+                or url.query or url.fragment or not url.path or any(c.isspace() for c in repo)):
+            return False
+        # Hermes treats GitHub browser paths and `.git/<path>` specially as implicit subdirs.
+        # Do not let those override the separate subdir that the user reviewed.
+        if url.hostname.lower() == "github.com" and len(url.path.strip("/").split("/")) != 2:
+            return False
+        if ".git/" in url.path and url.path.partition(".git/")[2].strip("/"):
+            return False
+        if url.port is not None and not 1 <= url.port <= 65535:
+            return False
+    except ValueError:
+        return False
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        return False
+    return not subdir or (bool(re.fullmatch(r"[A-Za-z0-9._/-]+", subdir))
+                          and all(p not in ("", ".", "..") for p in subdir.split("/")))
 
 
 def drive(*, plugin: str, request: str, hermes: list[str], env: dict[str, str], config: dict[str, Any],
@@ -380,19 +428,16 @@ def drive(*, plugin: str, request: str, hermes: list[str], env: dict[str, str], 
           tmp_root: Optional[str] = None) -> DriveOutcome:
     """Full test drive in one sandbox. Never raises for subprocess trouble; reports it instead."""
     outcome = DriveOutcome(plugin=plugin)
+    if not valid_source(repo, sha, subdir):
+        outcome.error = "invalid catalog source, commit SHA, or subdirectory; refusing install"
+        return outcome
     box = Sandbox(hermes=hermes, env=env, config=config, popen=popen, tmp_root=tmp_root)
     try:
         box.create()
         outcome.sandbox = str(box.home)
         if run_baseline:
             outcome.baseline = box.chat(request, run_timeout)
-        inst = box.install(plugin, install_timeout)
-        if (inst.rc not in (0, None) and NOT_IN_LOCAL_CATALOG in (inst.stderr + inst.stdout).lower()
-                and repo.startswith("https://") and len(sha) == 40 and not subdir):
-            # An older Hermes whose bundled catalog lacks the entry: install the exact pinned commit
-            # the live catalog lists, by URL. Same code, same scanner, same dependency admission.
-            box.notes.append("installed by pinned URL: this Hermes's own catalog copy lacks the entry")
-            inst = box.install_pinned(repo, sha, install_timeout)
+        inst = box.install_pinned(repo, sha, subdir, install_timeout)
         if inst.timed_out:
             outcome.error = f"install timed out after {install_timeout:.0f}s"
         elif inst.rc != 0:
@@ -403,9 +448,13 @@ def drive(*, plugin: str, request: str, hermes: list[str], env: dict[str, str], 
         if outcome.baseline or outcome.with_plugin:
             rows = [r for r in box.sessions() if r.get("message_count") or r.get("messages")]
             runs = [r for r in (outcome.baseline, outcome.with_plugin) if r is not None]
-            # Sessions come back oldest first and the runs were made in that order.
-            for res, row in zip(runs, rows[-len(runs):] if len(rows) >= len(runs) else rows):
-                res.tools_called, res.cost_usd = session_tools(row)
+            for res in runs:
+                matching = [row for row in rows if res.session_id and row.get("id") == res.session_id]
+                # Never assign another run's evidence when an ID is missing or duplicated.
+                if (len(matching) == 1 and sum(r.session_id == res.session_id for r in runs) == 1
+                        and transcript_complete(matching[0])):
+                    res.tools_called, res.cost_usd = session_tools(matching[0])
+                    res.evidence_available = True
     except Exception as exc:  # create() failure, Popen failure (hermes missing), ...
         outcome.error = outcome.error or f"{type(exc).__name__}: {exc}"
     finally:

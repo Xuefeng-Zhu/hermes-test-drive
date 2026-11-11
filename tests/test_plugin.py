@@ -38,7 +38,7 @@ class Drives:
         if self.outcome is not None:
             return self.outcome
         res = sandbox.RunResult(True, "Evaluating 68, Communicating 65, Disagreeing 58.",
-                                tools_called=["culture_gap_analysis"], seconds=12.0, cost_usd=0.0004)
+                                tools_called=["culture_gap_analysis"], seconds=12.0, cost_usd=0.0004, evidence_available=True)
         return sandbox.DriveOutcome(plugin=kw["plugin"], sandbox="/tmp/hermes-testdrive-x", installed=True,
                                     with_plugin=res, cleanup_ok=True)
 
@@ -103,20 +103,27 @@ def test_register_touches_no_network(ctx, env):
 
 # --- approval gate ----------------------------------------------------------------------------------
 
-def test_run_tool_is_escalated_to_hermes_approval(plugin):
-    plugin.td_store = None
-    directive = plugin.hooks["pre_tool_call"](tool_name="test_drive_run", args={"plugin": "jalancost"}, task_id="t")
-    assert directive["action"] == "approve" and "jalancost" in directive["message"]
-    assert directive["rule_key"].startswith("test-drive:jalancost@")
-    assert plugin.hooks["pre_tool_call"](tool_name="terminal", args={"command": "ls"}) is None
-    assert plugin.hooks["pre_tool_call"](tool_name="test_drive_find", args={"need": "x"}) is None
+def test_agent_tool_approval_shows_refreshed_full_pin(plugin):
+    hook = plugin.hooks["pre_tool_call"]
+    directive = hook(tool_name="test_drive_run", args={"plugin": "jalancost"})
+    assert directive["action"] == "approve"
+    assert "aa3f8f9254de" in directive["message"] and len(directive["rule_key"].split("@")[-1]) == 64
+    assert hook(tool_name="test_drive_run", args={"plugin": "unknown"})["action"] == "block"
+    assert hook(tool_name="terminal", args={}) is None
 
 
-def test_rule_key_pins_the_sha_once_catalog_is_loaded(plugin):
-    json.loads(plugin.tools["test_drive_find"]["handler"]({"need": "road trip toll"}))
-    d = plugin.hooks["pre_tool_call"](tool_name="test_drive_run", args={"plugin": "jalancost"})
-    assert d["rule_key"] == "test-drive:jalancost@aa3f8f9254de"
-    assert "github.com/Apihpih96/hermes-jalancost @ aa3f8f9254de" in d["message"]
+def test_approval_rule_changes_with_repo_or_subdir(plugin, store, monkeypatch):
+    catalog = store.load()
+    monkeypatch.setattr(store, "load", lambda **kwargs: catalog)
+    hook = plugin.hooks["pre_tool_call"]
+    args = {"plugin": "jalancost"}
+    original = hook(tool_name="test_drive_run", args=args)["rule_key"]
+    entry = catalog.get("jalancost")
+    entry.repo = "https://github.com/example/other"
+    changed_repo = hook(tool_name="test_drive_run", args=args)["rule_key"]
+    entry.subdir = "other"
+    changed_subdir = hook(tool_name="test_drive_run", args=args)["rule_key"]
+    assert len({original, changed_repo, changed_subdir}) == 3
 
 
 # --- find --------------------------------------------------------------------------------------------
@@ -274,9 +281,10 @@ def test_run_refuses_unknown_removed_and_needs_request(plugin):
 
 
 def test_run_tool_handler_after_gate(plugin):
-    out = json.loads(plugin.tools["test_drive_run"]["handler"](
-        {"plugin": "weather", "request": "forecast for Seattle"}, session_id="s9"))
-    assert out["status"] == "ok" and "Test drive: weather" in out["report"].replace("**", "")
+    args = {"plugin": "weather", "request": "forecast for Seattle"}
+    assert plugin.hooks["pre_tool_call"](tool_name="test_drive_run", args=args)["action"] == "approve"
+    out = json.loads(plugin.tools["test_drive_run"]["handler"](args, session_id="s9"))
+    assert out["status"] == "ok" and plugin.drives.calls
 
 
 def test_oauth_model_needs_sandbox_settings(ctx, store, monkeypatch):
@@ -329,7 +337,7 @@ def test_keep_without_desktop_gives_hermes_install_command(plugin):
     assert plugin.dispatched[0] == ("manage_catalog", {
         "action": "install", "items": [{"kind": "plugin", "id": "jalancost"}],
         "reason": "You test-drove it with test-drive and chose to keep it."})
-    assert "hermes plugins install jalancost" in text
+    assert "hermes plugins install" in text and "--ref aa3f8f9254de" in text
     assert plugin.state.data["drives"][-1]["decision"] == "keep: install pending"
 
 
@@ -342,12 +350,12 @@ def test_keep_through_desktop_card(plugin):
 
 def test_keep_survives_dispatch_exception(plugin):
     plugin.dispatch_result = RuntimeError("no agent")
-    assert "hermes plugins install weather" in cmd(plugin, "keep weather")
+    assert "hermes plugins install" in cmd(plugin, "keep weather")
 
 
 def test_discard_and_history(plugin):
     cmd(plugin, "run jalancost --yes -- KL to Penang")
-    assert "nothing was installed" in cmd(plugin, "discard jalancost")
+    assert "temporary profile was deleted" in cmd(plugin, "discard jalancost")
     assert "No test drive of `weather`" in cmd(plugin, "discard weather")
     hist = cmd(plugin, "history")
     assert "`jalancost` @ aa3f8f92: ran, did not use its tools" in hist and "discarded" in hist
@@ -370,8 +378,8 @@ def test_settings_coercion(ctx, store):
 
 
 def test_honest_verdict_when_plugin_tools_unused(plugin):
-    res = sandbox.RunResult(True, "Total RM95.23, RM31.74 each.", tools_called=["execute_code"], seconds=9.0)
-    base = sandbox.RunResult(True, "About RM95 in total.", tools_called=["terminal"], seconds=8.0)
+    res = sandbox.RunResult(True, "Total RM95.23, RM31.74 each.", tools_called=["execute_code"], seconds=9.0, evidence_available=True)
+    base = sandbox.RunResult(True, "About RM95 in total.", tools_called=["terminal"], seconds=8.0, evidence_available=True)
     plugin.drives.outcome = sandbox.DriveOutcome(plugin="jalancost", installed=True, baseline=base,
                                                  with_plugin=res, cleanup_ok=True)
     text = cmd(plugin, "run jalancost --yes -- KL to Penang 350 km")
@@ -382,7 +390,7 @@ def test_honest_verdict_when_plugin_tools_unused(plugin):
 
 
 def test_cleanup_problem_is_surfaced(plugin):
-    res = sandbox.RunResult(True, "ok", tools_called=["estimate_road_trip_cost"])
+    res = sandbox.RunResult(True, "ok", tools_called=["estimate_road_trip_cost"], evidence_available=True)
     plugin.drives.outcome = sandbox.DriveOutcome(plugin="jalancost", installed=True, with_plugin=res,
                                                  cleanup_ok=False, cleanup_notes=["could not delete /tmp/x"])
     text = cmd(plugin, "run jalancost --yes -- x")
@@ -397,26 +405,16 @@ def test_long_gap_need_is_trimmed_in_help(plugin):
     assert "Last gap noticed: “culture gap analysis" in help_text and "…”" in help_text
 
 
-def test_pinned_url_install_is_explained(plugin):
-    res = sandbox.RunResult(True, "ok", tools_called=["estimate_road_trip_cost"])
-    plugin.drives.outcome = sandbox.DriveOutcome(
-        plugin="jalancost", installed=True, with_plugin=res, cleanup_ok=True,
-        cleanup_notes=["installed by pinned URL: this Hermes's own catalog copy lacks the entry"])
-    text = cmd(plugin, "run jalancost --yes -- x")
-    assert "installed the same pinned commit by URL (aa3f8f9254de)" in text and "deleted ✓" in text
-    call = plugin.drives.calls[-1]
-    assert call["repo"].endswith("hermes-jalancost") and call["sha"].startswith("aa3f8f92") and call["subdir"] == "jalancost"
-
-
-def test_keep_after_url_install_suggests_pinned_url(plugin):
-    res = sandbox.RunResult(True, "ok", tools_called=["culture_gap_analysis"])
-    plugin.drives.outcome = sandbox.DriveOutcome(
-        plugin="global-business-culture", installed=True, with_plugin=res, cleanup_ok=True,
-        cleanup_notes=["installed by pinned URL: this Hermes's own catalog copy lacks the entry"])
-    cmd(plugin, "run global-business-culture --yes -- x")
+def test_keep_suggests_current_exact_catalog_pin(plugin):
     text = cmd(plugin, "keep global-business-culture")
     assert ("hermes plugins install https://github.com/pswong661-eng/hermes-global-business-culture "
             "--ref 49218a35f670ceae6f79dc07d40536b19da23cc6") in text
+
+
+def test_discard_does_not_claim_cleanup_succeeded(plugin):
+    plugin.drives.outcome = sandbox.DriveOutcome(plugin="jalancost", cleanup_ok=False)
+    cmd(plugin, "run jalancost --yes -- x")
+    assert "Check the drive report" in cmd(plugin, "discard jalancost")
 
 
 def test_long_request_is_kept_whole_for_the_sandbox(plugin):
@@ -427,3 +425,22 @@ def test_long_request_is_kept_whole_for_the_sandbox(plugin):
     cmd(plugin, "run global-business-culture", session_id="lr")
     assert plugin.drives.calls[-1]["request"] == long_ask.strip()
     assert plugin.drives.calls[-1]["run_baseline"] is False
+
+
+def test_other_session_gap_is_never_reused(plugin):
+    cmd(plugin, "culture")
+    turn(plugin, GAP_ASK, GAP_REPLY, session="a")
+    assert "Last gap noticed" not in cmd(plugin, "", session_id="b")
+    assert "What should the sandbox try?" in cmd(plugin, "run global-business-culture", session_id="b")
+    assert not plugin.drives.calls
+
+
+def test_unknown_evidence_is_not_reported_as_no_tool_use(plugin):
+    result = sandbox.RunResult(True, "reply", evidence_available=False)
+    plugin.drives.outcome = sandbox.DriveOutcome(plugin="jalancost", installed=True,
+                                                 with_plugin=result, cleanup_ok=True)
+    text = cmd(plugin, "run jalancost --yes -- trip")
+    assert "tool-use evidence is unavailable" in text
+    assert "did not call" not in text and "did not earn" not in text
+    assert plugin.state.data["drives"][-1]["plugin_tools_used"] is None
+    assert "tool-use evidence unavailable" in cmd(plugin, "history")
