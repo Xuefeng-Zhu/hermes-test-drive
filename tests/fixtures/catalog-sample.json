@@ -1,0 +1,493 @@
+{
+ "generated_at": "2026-11-11T07:23:26.182128+00:00",
+ "entries": [
+  {
+   "name": "0bull",
+   "repo": "https://github.com/0bull/agent-plugin",
+   "sha": "240890a71715375bc877b238491e414517e9d902",
+   "description": "Control real iPhones rented from 0bull (screenshots, on-screen text, taps, typing, device commands, recorded macros, an on-phone agent) and publish videos to TikTok and YouTube Shorts from them, through the hosted 0bull Streamable HTTP MCP server plus three workflow skills. Portable Agent Plugins v1 package (mcp.json + skills/), no plugin code. Requires a 0bull account with a rented phone and browser OAuth consent (add the server with auth: oauth, then hermes mcp login 0bull); no API key or client secret is stored in the plugin. Posting sends the user's video and caption to TikTok or YouTube through the phone's own apps. Disclosure \u2014 hosted-only connector; screenshots, on-screen text, anything typed on the phone (including passwords or codes you hand the agent) and your videos and captions go to 0bull.net; posts publish publicly to TikTok or YouTube; the server also exposes rental tools that spend money, which the skills tell the model never to call but Hermes does not block.",
+   "maintainer": "0bull",
+   "tier": "community",
+   "category": "tools",
+   "docs_url": "https://github.com/0bull/agent-plugin#readme",
+   "version": "1.0.0",
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "abstract-provider",
+   "title": "Abstract",
+   "repo": "https://github.com/abstractpbc/hermes-abstract-provider",
+   "sha": "e322e42578586af1c376b7e836dfce437308682a",
+   "description": "Abstract model provider (GLM-5.3, DeepSeek-V4-Flash, Kimi-K3) over the OpenAI Responses API with a bundled model catalog. Disclosure \u2014 registers one model provider at import and nothing else (no tools, hooks, commands or threads); requests go to https://api.abstract.inc/v1 through Hermes' own client with ABSTRACT_API_KEY, which Hermes reads; the plugin itself opens no connections, reads and writes no files and starts no processes.",
+   "maintainer": "abstractpbc",
+   "tier": "community",
+   "category": "models",
+   "requires_hermes": ">=0.22.2",
+   "version": "1.0.0",
+   "docs_url": "https://github.com/abstractpbc/hermes-abstract-provider#readme",
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": [
+     "ABSTRACT_API_KEY"
+    ]
+   }
+  },
+  {
+   "name": "budget-leash",
+   "repo": "https://github.com/jusst01/budget-leash",
+   "sha": "7b4126703e84826e8ff8a8926432057f7790686c",
+   "description": "Hard budget enforcement for Hermes sessions. Tracks estimated model spend (token usage x per-model prices, cache read/write tokens included) and tool-call counts against a per-session cap and a persistent per-day cap; blocks tool calls via pre_tool_call once a cap is exhausted and cuts off the model calls themselves via the llm_execution middleware, answering with a synthetic budget-exhausted reply so the provider is never invoked (fail-closed), so unattended agents cannot run up unbounded cost; warns at 80% of a cap via context injection, keeps a flock-guarded day-ledger on disk that survives restarts and is shared safely across processes, and writes a per-session JSONL spend report. Disclosure \u2014 local code only; meters estimated model spend from token-usage metadata and tool-call counts, and with the defaults ($2 per session, $10 per day, 200 tool calls per session, 1000 per day) refuses tool calls and answers model calls with a synthetic budget-exhausted reply once a cap is reached; spend figures are estimates from a user-editable price table (default $1/$3 per million input/output tokens), not provider bills; reads its settings from budget-leash.json in the Hermes home and writes ledger.json, its lock file and reports.jsonl under plugin-data/budget-leash/ there; no network calls, no subprocesses.",
+   "maintainer": "jusst",
+   "tier": "community",
+   "category": "automation",
+   "docs_url": "https://github.com/jusst01/budget-leash#readme",
+   "version": "0.1.2",
+   "requires_hermes": ">=0.22.0",
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [
+     "pre_llm_call",
+     "pre_tool_call",
+     "post_tool_call",
+     "post_api_request",
+     "on_session_end"
+    ],
+    "provides_middleware": [
+     "llm_execution"
+    ],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "cost-sentinel",
+   "repo": "https://github.com/SongotenU/hermes-cost-sentinel",
+   "sha": "969c7ea8d95617614cad31b912fe59419293f54b",
+   "description": "Live cost ledger and daily budget guarddog for Hermes Agent, per profile or fleet-wide \u2014 every LLM call is priced with Hermes' own pricing engine into a per-profile SQLite ledger plus a shared fleet ledger (all profiles of the install roll into one daily number); /cost rules the budget (set, block, warn, off, scope fleet or profile, resume, reset), the cost_report tool lets the agent read it, and the hard pre_llm_call gate stops an over-budget turn with an escape-hatch message. Desktop pane shows the gate number (fleet or profile) with a spend ring, per-model and per-day breakdowns and a status-bar budget chip. Disclosure \u2014 writes a per-profile SQLite ledger and a ledger shared by every profile of the install at <default hermes root>/plugin-data/cost-sentinel/fleet.db, which also holds the daily budget settings, so /cost set, block, resume or reset in any profile changes the budget for all profiles; rows store tokens, cost, model/provider, session/turn/request ids, platform and error type plus the first 400 characters of provider error messages, never prompt, response or tool-argument text; the hard gate is off by default, is checked once before each turn (a turn already running can overshoot), and counts calls Hermes cannot price as $0; no network of its own (pricing goes through the host pricing engine), no MCP, shell, credentials or telemetry.",
+   "maintainer": "SongotenU",
+   "tier": "community",
+   "category": "tools",
+   "version": "1.0.0",
+   "requires_hermes": ">=0.22.6",
+   "platforms": [
+    "linux",
+    "macos",
+    "windows"
+   ],
+   "docs_url": "https://github.com/SongotenU/hermes-cost-sentinel",
+   "capabilities": {
+    "provides_tools": [
+     "cost_report"
+    ],
+    "provides_hooks": [
+     "post_api_request",
+     "api_request_error",
+     "post_auxiliary_call",
+     "pre_llm_call"
+    ],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "doc-markdown",
+   "repo": "https://github.com/TakeshiTGAL/hermes-plugin-doc-markdown",
+   "sha": "4206b7f8066fe84f2c295f480a441f47154d9315",
+   "description": "Convert one local file to Markdown with doc_convert on Linux and macOS, built on Microsoft's MarkItDown. Microsoft and MarkItDown are trademarks of the Microsoft group of companies. Disclosure \u2014 the doc_markdown toolset is on by default on every surface, including a gateway, so anyone you allow there can call doc_convert; stop it with hermes tools. It does not fetch pages. Unattended sessions still convert when Hermes calls the tool. This plugin creates no cron job. A child process runs MarkItDown with no Hermes keys in its environment; on macOS the plugin runs ps about every 10 ms to watch that child's memory. It stops 8 seconds after its converters load, at 60 seconds if loading never finishes, or above 922746880 bytes. It is not a sandbox: after realpath it may read any allowlisted path it can open. Unpublished Hermes code locates the Hermes home, and a failed check refuses the path. Removal deletes the plugin directory, not the markitdown package. Windows was not tested.",
+   "maintainer": "TakeshiTGAL",
+   "tier": "community",
+   "category": "tools",
+   "docs_url": "https://github.com/TakeshiTGAL/hermes-plugin-doc-markdown#readme",
+   "version": "0.1.0",
+   "requires_hermes": ">=0.21.4",
+   "platforms": [
+    "linux",
+    "macos"
+   ],
+   "capabilities": {
+    "provides_tools": [
+     "doc_convert"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "global-business-culture",
+   "repo": "https://github.com/pswong661-eng/hermes-global-business-culture",
+   "sha": "49218a35f670ceae6f79dc07d40536b19da23cc6",
+   "version": "1.0.0",
+   "title": "Global Business Culture",
+   "description": "Cross-cultural business intelligence: country culture briefs and home-vs-host gap analysis computed from bundled Meyer, Hofstede, GLOBE and Lewis data. Three deterministic tools (culture_brief, culture_gap_analysis, culture_countries), a /culture command and a bundled practitioner-playbook skill. 57 economies offline, no dependencies, no network, no env vars \u2014 the gap analysis ranks the exact scale distances between two cultures, names the misread each gap produces and prescribes adaptation moves. Deep ASEAN/frontier coverage (Laos, Cambodia, Myanmar flagged as extrapolated from GLOBE-cluster neighbours).",
+   "maintainer": "pswong661-eng",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.21.0",
+   "readme": true,
+   "platforms": [
+    "linux",
+    "macos",
+    "windows"
+   ],
+   "capabilities": {
+    "provides_tools": [
+     "culture_brief",
+     "culture_gap_analysis",
+     "culture_countries"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   },
+   "known_issues": [
+    "Scale positions are approximations distilled from the published frameworks (Meyer, Hofstede, GLOBE, Lewis), not measurements; countries not in the original datasets are extrapolated from cluster neighbours and flagged in tool output."
+   ]
+  },
+  {
+   "name": "gmail",
+   "repo": "https://github.com/guberm/hermes-gmail-desktop-plugin",
+   "sha": "c8cd0c2d140561a1dffb7432c6d02b63b2374888",
+   "subdir": "plugins/gmail",
+   "title": "Gmail",
+   "description": "Hermes Desktop Gmail mailbox UI for search, reading, and thread inspection, with preview-confirmed send, reply, archive, trash, and label changes. Uses the active profile's existing Google Workspace OAuth setup; email is sensitive external content. Gmail actions and data access require user review and configuration. Disclosure \u2014 reads the active profile's Hermes Google Workspace token (google_token.json, refreshed in memory only) and calls the Gmail API; opening an unread message marks it read, other send/trash/label changes go through a confirm step (one setting can skip every review dialog, and then the prepare ticket, account/profile binding, exact snapshot validation and readback verification still run); remote email images load only after the user allows them. Attachment metadata listing and bounded read-only attachment download (25 MB cap) are profile/account-scoped.",
+   "maintainer": "guberm",
+   "tier": "community",
+   "category": "desktop",
+   "docs_url": "https://github.com/guberm/hermes-gmail-desktop-plugin#readme",
+   "version": "1.0.20",
+   "readme": false,
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "google-workspace",
+   "repo": "https://github.com/francoleff/google-workspace-hermes",
+   "sha": "ae9a3e7847d7f0c02c4fccf2e6c04ed453f2e089",
+   "description": "Gmail, Calendar, Drive, Docs, Sheets and Contacts in one Hermes workspace, with cross-app briefs and approval on every write. Disclosure \u2014 signs in with the user's own Google Cloud OAuth client through Hermes (`hermes auth add google-workspace:google`) and requests broad scopes (gmail.modify/send/compose, full Drive, Docs, Sheets, Calendar events, Contacts); tools and the Desktop page read and change mail, calendar, files, documents, sheets and contacts on that account, and sending, sharing, inviting, trashing and other writes ask for Hermes approval first; a Changes tab keeps a local list (title and link) of the writes Hermes made, pushed to every connected Desktop window.",
+   "maintainer": "francoleff",
+   "tier": "community",
+   "category": "desktop",
+   "requires_hermes": ">=0.22.3",
+   "version": "0.3.0",
+   "title": "Google Workspace for Hermes",
+   "readme": true,
+   "platforms": [],
+   "known_issues": [
+    "Sign-in is a terminal command (hermes auth add google-workspace:google), not an in-app flow.",
+    "Sensitive and restricted Google scopes need Google's app verification before public sign-in.",
+    "RSVP and the sidebar actions have not been run inside the running Hermes Desktop app.",
+    "Invoice amounts come from text heuristics and must be checked.",
+    "Not affiliated with or endorsed by Google. Google product marks are Google trademarks."
+   ],
+   "capabilities": {
+    "provides_tools": [
+     "google_calendar_agenda",
+     "google_calendar_cancel_event",
+     "google_calendar_check_availability",
+     "google_calendar_create_event",
+     "google_calendar_rsvp",
+     "google_calendar_search",
+     "google_calendar_update_event",
+     "google_contacts_create",
+     "google_contacts_delete",
+     "google_contacts_search",
+     "google_contacts_update",
+     "google_docs_append",
+     "google_docs_create",
+     "google_docs_read",
+     "google_docs_replace_text",
+     "google_drive_create_folder",
+     "google_drive_get",
+     "google_drive_move",
+     "google_drive_rename",
+     "google_drive_search",
+     "google_drive_share",
+     "google_drive_trash",
+     "google_email_to_event",
+     "google_gmail_draft",
+     "google_gmail_forward",
+     "google_gmail_modify",
+     "google_gmail_read",
+     "google_gmail_search",
+     "google_gmail_send",
+     "google_gmail_update_draft",
+     "google_invoices_to_sheet",
+     "google_meeting_brief",
+     "google_organize_drive",
+     "google_search",
+     "google_sheets_append",
+     "google_sheets_create",
+     "google_sheets_create_tab",
+     "google_sheets_metadata",
+     "google_sheets_read",
+     "google_sheets_update_range"
+    ],
+    "provides_hooks": [
+     "pre_tool_call"
+    ],
+    "provides_middleware": [],
+    "requires_env": [
+     "GOOGLE_WORKSPACE_CLIENT_ID",
+     "GOOGLE_WORKSPACE_CLIENT_SECRET"
+    ]
+   }
+  },
+  {
+   "name": "hathor-catchup",
+   "repo": "https://github.com/DrAhmed7887/hathor-hermes-plugin",
+   "sha": "07fa5bc4812812138c79c360994acd2ec2311ed7",
+   "description": "Check a child's vaccination card against a sourced national schedule (Egypt, Sudan, Syria, Nigeria, Ethiopia, Eritrea, South Sudan, WHO) and get the missing doses and a dated catch-up plan. Deterministic engine with no model or network calls; a schedule guard (pre_llm_call, post_tool_call, transform_llm_output) keeps vaccine answers tied to the tool and its source. Disclosure \u2014 no network calls, model calls, shell commands, credentials or stored data; a guard hook adds a short instruction to vaccine-related turns and appends a footer to those replies (the schedule source when the tool ran, a warning when it did not). The \"checked\" footer means the tool ran in that turn, not that the reply's wording was verified. Schedules are bundled snapshots (last updated 2025-12 to 2026-04) and some rule tables are marked pending physician sign-off in the tool output. Decision support, not medical advice.",
+   "maintainer": "DrAhmed7887",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.23.0",
+   "version": "0.1.0",
+   "title": "Hathor catch-up",
+   "capabilities": {
+    "provides_tools": [
+     "vaccine_card_check",
+     "vaccine_schedule"
+    ],
+    "provides_hooks": [
+     "pre_llm_call",
+     "post_tool_call",
+     "transform_llm_output"
+    ],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "jalancost",
+   "repo": "https://github.com/Apihpih96/hermes-jalancost",
+   "sha": "aa3f8f9254de3366c442996ca4d12b6760206fe4",
+   "subdir": "jalancost",
+   "description": "Offline Malaysian road-trip fuel and toll estimates with per-person splits, calculated only from user-supplied values.",
+   "maintainer": "Apihpih96",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.22.7",
+   "docs_url": "https://github.com/Apihpih96/hermes-jalancost",
+   "version": "0.1.0",
+   "readme": true,
+   "platforms": [],
+   "title": "JalanCost",
+   "onboarding": false,
+   "known_issues": [
+    "Validated on Linux with Hermes v0.22.7; Android/Termux support has not been validated.",
+    "The recorded demonstration is a direct tool invocation, not a model-issued call."
+   ],
+   "capabilities": {
+    "provides_tools": [
+     "estimate_road_trip_cost"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "nomads-planner",
+   "repo": "https://github.com/lawmight/hermes-nomads-planner",
+   "sha": "33a86ddd01db069c028c367dcbf3ed777ad093fd",
+   "description": "Nomads.com for Hermes: read your own trips and favorite cities, look up curated city and country facts (monthly costs, rent, internet speed, weather, safety and other 0-5 scores), list upcoming in-person meetups, and build a next-stay brief in one call that joins your current and upcoming stays, unplanned gaps, city facts, meetups inside each stay's dates and your past visits, with deterministic comparisons (cheapest, fastest internet, safest). Native plugin: 7 read-only tools, a /nomads slash command and a bundled planning skill. City, country and meetup tools work without an account; trips and favorites need a free personal key from https://nomads.com/settings, read through Hermes' secret scope. Disclosure \u2014 makes HTTPS GET requests to https://nomads.com/api only (sending your username and personal key in the Authorization header for trips and favorites); no writes, no other hosts, no files read, no background processes, no telemetry; public city data is cached in memory for 10 minutes. Not affiliated with Nomads.com.",
+   "maintainer": "lawmight",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.23.0",
+   "docs_url": "https://github.com/lawmight/hermes-nomads-planner#readme",
+   "version": "0.1.0",
+   "title": "Nomads Planner",
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [
+     "nomads_search_cities",
+     "nomads_get_city",
+     "nomads_get_country",
+     "nomads_list_meetups",
+     "nomads_get_trips",
+     "nomads_get_favorites",
+     "nomads_next_stay_brief"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "publora",
+   "title": "Publora",
+   "repo": "https://github.com/publora-team/hermes-publora",
+   "sha": "189b417e90bd2da81876a7594fd0a0e0b5c94b5d",
+   "description": "Draft, schedule and publish social media posts on LinkedIn, X, Instagram, Threads, TikTok, YouTube, Facebook, Bluesky, Mastodon and Telegram through Publora's hosted Streamable HTTP MCP server. Portable Agent Plugins v1 package with nine skills; no local executable code.",
+   "maintainer": "publora-team",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.23.1",
+   "docs_url": "https://github.com/publora-team/hermes-publora/blob/189b417e90bd2da81876a7594fd0a0e0b5c94b5d/README.md",
+   "version": "1.0.0",
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "tabella",
+   "repo": "https://github.com/dyiapanis/tabella",
+   "sha": "e6e53da87b7a2d6ed81dc675c578dafd72a01b0c",
+   "description": "Read, create and convert documents \u2014 .docx, .xlsx, .pptx, .pdf, .odt, .ods, .odp \u2014 from structured JSON or HTML/CSS, with OCR for scanned files.\n\nDisclosures\n- Shells out to pandoc for conversion, a TeX engine for PDF output, and tesseract for OCR.\n- Re-execs into its own dependency venv, bootstrapped from PyPI on first run.\n- Optional self-host HTTP server; a bearer token is generated into the plugin data directory on first run.\n- Reads and writes only the filesystem paths you pass.\n- Runs entirely locally: no network calls, no telemetry.\n",
+   "maintainer": "dyiapanis",
+   "tier": "community",
+   "category": "tools",
+   "requires_hermes": ">=0.21",
+   "docs_url": "https://github.com/dyiapanis/tabella#readme",
+   "version": "2.0.7",
+   "image": "https://raw.githubusercontent.com/dyiapanis/tabella/e6e53da87b7a2d6ed81dc675c578dafd72a01b0c/docs/banner.jpg",
+   "readme": true,
+   "platforms": [
+    "linux",
+    "macos",
+    "windows"
+   ],
+   "capabilities": {
+    "provides_tools": [
+     "doc_read",
+     "doc_read_meta",
+     "doc_convert",
+     "doc_create_document",
+     "doc_edit_pdf"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "time-gap",
+   "repo": "https://github.com/Randool/time-gap",
+   "sha": "bc5e65503a412808029573a98b6008387a0ac2f6",
+   "description": "Inject an implicit time-gap sense only when a gap or a date rollover crosses.",
+   "maintainer": "Randool",
+   "tier": "community",
+   "category": "general",
+   "docs_url": "https://github.com/Randool/time-gap#readme",
+   "capabilities": {
+    "provides_tools": [],
+    "provides_hooks": [
+     "pre_llm_call"
+    ],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "unified-inbox",
+   "title": "Unified Inbox",
+   "repo": "https://github.com/krushna-sahu1/unified-inbox",
+   "sha": "c40db03612f0f4e233e80129e7849ad3e77c360f",
+   "version": "1.4.1",
+   "requires_hermes": ">=0.23.0",
+   "description": "One inbox for the user's WhatsApp, Instagram and LinkedIn messages through their own Unipile account (API v2): a synced local copy, search in any language, triage with a reason for each chat, memory of people and open items, drafts in the user's own writing style, scam warnings, plans offered for the calendar, translation, a people radar and a spoken brief, plus an Inbox page in the web dashboard and Hermes Desktop. Every send and reaction goes through Hermes's own approval prompt (a pre_tool_call hook) and is refused when approval would be skipped (yolo mode, approvals off, cron), under hard pacing limits. Disclosure \u2014 calls the Unipile API (api.unipile.com) with the user's key; Unipile reaches WhatsApp, Instagram and LinkedIn through unofficial access, which may break those platforms' terms. Every send and reaction goes through Hermes's own approval prompt and is refused under yolo mode, approvals off or unattended runs; the model may attach any file the user can read (key and login files excepted), and each file is named in that prompt. Optional and off until configured: a cloud embedding provider (OpenAI, Gemini, Cohere or Voyage AI) that receives message text, the user's own Supabase project for two-way sync (api.supabase.com once, to create tables), a private iCal address read for busy times, a webhook receiver on 127.0.0.1 that accepts only HMAC-signed Unipile deliveries, and alerts injected into a chat the user picks. Runs a background sync thread by default that summarises, drafts and translates new messages with Hermes's model (capped per day); text sent to a model or provider has one-time codes, passwords and card, bank and ID numbers removed first. Stores chats, messages, memory and a send log in SQLite under the plugin's data folder; secrets come only from Hermes's secret store. Calls Hermes internals that are not a stable plugin API (tools.transcription_tools.transcribe_audio for voice notes, private tools.approval checks). No telemetry, no shell commands, no self-update.",
+   "maintainer": "krushna-sahu1",
+   "tier": "community",
+   "category": "tools",
+   "docs_url": "https://github.com/krushna-sahu1/unified-inbox/blob/c40db03612f0f4e233e80129e7849ad3e77c360f/README.md",
+   "image": "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/catalog-card.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/today.png",
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/approve.png",
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/chat.png",
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/radar.png",
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/setup-light.png",
+    "https://raw.githubusercontent.com/krushna-sahu1/unified-inbox/c40db03612f0f4e233e80129e7849ad3e77c360f/assets/readme/screens/phone.png"
+   ],
+   "readme": true,
+   "platforms": [],
+   "capabilities": {
+    "provides_tools": [
+     "inbox_status",
+     "inbox_list_chats",
+     "inbox_read_chat",
+     "inbox_search",
+     "inbox_triage",
+     "inbox_updates",
+     "inbox_context",
+     "inbox_loops",
+     "inbox_memory",
+     "inbox_schedule",
+     "inbox_watch",
+     "inbox_draft_reply",
+     "inbox_list_drafts",
+     "inbox_send",
+     "inbox_react",
+     "inbox_attachment",
+     "inbox_mark_read",
+     "inbox_safety",
+     "inbox_calendar",
+     "inbox_translate",
+     "inbox_radar",
+     "inbox_brief"
+    ],
+    "provides_hooks": [
+     "pre_tool_call"
+    ],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  },
+  {
+   "name": "weather",
+   "repo": "https://github.com/FahrenheitResearch/hermes-weather-plugin",
+   "sha": "d474493ef4ffeefabad9dbf0188f72bce3b47b67",
+   "description": "Weather data, radar/model imagery, and verified meteorological calculations. Built on metrust, rusbie, wrf-rust, rustdar, and ecape-rs.",
+   "maintainer": "FahrenheitResearch",
+   "tier": "community",
+   "category": "tools",
+   "docs_url": "https://github.com/FahrenheitResearch/hermes-weather-plugin#readme",
+   "capabilities": {
+    "provides_tools": [
+     "wx_alerts",
+     "wx_brief",
+     "wx_calc",
+     "wx_conditions",
+     "wx_ecape",
+     "wx_forecast",
+     "wx_global",
+     "wx_metar",
+     "wx_model_image",
+     "wx_radar_image",
+     "wx_severe",
+     "wx_sounding",
+     "wx_storm_image"
+    ],
+    "provides_hooks": [],
+    "provides_middleware": [],
+    "requires_env": []
+   }
+  }
+ ],
+ "removed": [
+  {
+   "name": "or-picker",
+   "reason": "Folded into openrouter-picker. Installing the provider alone left the picker broken. Install openrouter-picker.",
+   "date": "2026-09-28"
+  }
+ ]
+}

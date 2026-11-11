@@ -1,0 +1,81 @@
+name: test-drive
+label: Test Drive
+version: 0.1.0
+description: >
+  Don't guess which plugin helps. Test-drive it. When Hermes hits a wall mid-conversation (it says it
+  can't, or a tool fails as unavailable), test-drive matches the official plugin catalog and shows
+  the top picks with trust cards (tier, pin, keys needed, declared tools and disclosures). After you
+  approve, it installs one candidate into a throwaway Hermes home, runs your original request there
+  once, deletes the sandbox and shows a before/after. Keep it through Hermes's own installer, or
+  discard it. Every drive leaves a receipt.
+author: Frank Zhu (Xuefeng-Zhu)
+license: MIT
+homepage: https://github.com/Xuefeng-Zhu/hermes-test-drive
+tags: [catalog, plugins, discovery, sandbox, tools]
+requires_hermes: ">=0.22.7"
+provides_tools:
+  - test_drive_find
+  - test_drive_run
+  - test_drive_keep
+provides_hooks:
+  - pre_tool_call
+  - pre_llm_call
+  - post_tool_call
+  - transform_llm_output
+config_schema:
+  nudges:
+    type: bool
+    default: true
+    label: Gap nudges
+    description: "Append one short catalog suggestion to a reply when Hermes says it can't do something (at most one every 3 turns per session)."
+  llm_check:
+    type: bool
+    default: false
+    label: Model double-check
+    description: "Ask your active model to confirm borderline gaps and to rerank catalog matches (extra model calls)."
+  run_timeout:
+    type: int
+    default: 120
+    label: Run timeout (seconds)
+    description: "Hard limit for each one-shot run inside the sandbox."
+  install_timeout:
+    type: int
+    default: 240
+    label: Install timeout (seconds)
+    description: "Hard limit for installing the candidate (clone, scan, dependencies) inside the sandbox."
+  baseline:
+    type: str
+    default: auto
+    choices: [auto, always, never]
+    label: Baseline run
+    description: "Also run the request in the sandbox before installing the plugin. auto: only when no failure was captured from the conversation."
+  catalog_ttl_hours:
+    type: int
+    default: 6
+    label: Catalog cache (hours)
+    description: "How long the downloaded catalog index is reused before it is fetched again."
+  sandbox_provider:
+    type: str
+    default: ""
+    label: Sandbox provider
+    description: "Model provider for sandbox runs (default: your profile's model.provider). Needed when your model signs in with OAuth."
+  sandbox_model:
+    type: str
+    default: ""
+    label: Sandbox model
+    description: "Model for sandbox runs (default: your profile's model)."
+  sandbox_base_url:
+    type: str
+    default: ""
+    label: Sandbox base URL
+    description: "OpenAI-compatible endpoint for sandbox runs when sandbox_provider is custom."
+  sandbox_key_env:
+    type: str
+    default: ""
+    label: Sandbox key variable
+    description: "Name of the env var holding the sandbox model's API key (the name, not the key)."
+  hermes_command:
+    type: str
+    default: ""
+    label: Hermes command
+    description: "How to start Hermes for sandbox runs (default: `hermes` on PATH, else this Python with -m hermes_cli.main)."
