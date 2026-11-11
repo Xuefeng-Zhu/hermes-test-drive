@@ -48,6 +48,12 @@ def _excerpt(text: str, n: int = 600) -> str:
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
+def request_excerpt(text: str, n: int = 200) -> str:
+    """The request as shown in approval prompts: newlines collapsed, first n characters."""
+    flat = " ".join(str(text or "").split())
+    return flat if len(flat) <= n else flat[: n - 1].rstrip() + "…"
+
+
 @dataclass
 class TurnState:
     user_message: str = ""
@@ -215,7 +221,8 @@ class TestDrive:
                 passed.append(name)
         return env, passed
 
-    def model_problem(self, model: dict[str, Any], passed: list[str], key_names: list[str]) -> Optional[str]:
+    def model_problem(self, model: dict[str, Any], passed: list[str], key_names: list[str],
+                      literal_key: bool = False) -> Optional[str]:
         provider = str(model.get("provider") or "").lower()
         if not model:
             return ("No model is configured in this profile, so the sandbox has nothing to run. Set one with "
@@ -224,7 +231,11 @@ class TestDrive:
             return (f"Your model ({provider}) signs in with OAuth, and test-drive never copies sign-ins into a "
                     "throwaway profile. Point the sandbox at an API-key route instead: set test-drive's "
                     "sandbox_provider, sandbox_model and sandbox_key_env (and sandbox_base_url for a custom endpoint).")
-        if key_names and not any(n in passed for n in key_names) and not model.get("api_key"):
+        if literal_key and not any(n in passed for n in key_names):
+            return ("Your model key is written literally in config.yaml, and test-drive never copies a literal key "
+                    "into a throwaway profile (the plugin under test could read it). Put the key in an env var "
+                    "and point test-drive's sandbox_key_env setting at it (or use key_env / ${VAR} in config.yaml).")
+        if key_names and not any(n in passed for n in key_names):
             local = str(model.get("base_url") or "").startswith(("http://localhost", "http://127.", "http://0.0.0.0"))
             if not local:
                 return (f"The sandbox needs your model key in {' or '.join(key_names)}, which is not set in this "
@@ -453,7 +464,13 @@ class TestDrive:
         model, provider_entry = self._user_model()
         env, passed = self.sandbox_env(entry, model, provider_entry)
         key_names = sandbox.model_key_env(model, provider_entry[1] if provider_entry else None, self._registry_keys)
-        problem = self.model_problem(model, passed, key_names)
+        # Literal keys never go into the sandbox config: the plugin under test could read them.
+        model, literal_m = sandbox.strip_literal_credentials(model)
+        literal_p = False
+        if provider_entry:
+            clean, literal_p = sandbox.strip_literal_credentials(provider_entry[1])
+            provider_entry = (provider_entry[0], clean)
+        problem = self.model_problem(model, passed, key_names, literal_key=literal_m or literal_p)
         if problem:
             prep["error"] = problem
             return prep
@@ -466,7 +483,7 @@ class TestDrive:
         return (f"Test-drive {e.name} ({e.tier}, {e.repo} @ {e.sha[:12]}): download it and its Python dependencies "
                 f"into a throwaway Hermes home, run your request once there with your model "
                 f"(Hermes child process, dangerous commands denied, {self.setting('run_timeout')}s limit), then delete "
-                f"everything.{keys}")
+                f"everything.{keys} Request: \"{request_excerpt(prep.get('request') or '')}\"")
 
     def run_drive(self, prep: dict[str, Any]) -> dict[str, Any]:
         """Run an APPROVED drive. Callers must have obtained approval first."""

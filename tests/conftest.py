@@ -127,6 +127,8 @@ class FakeProc:
         self.returncode = None
         log.append(self)
         key = " ".join(argv[1:3])
+        if len(argv) > 2 and argv[1] == "chat" and argv[2].startswith("-q"):
+            key = "chat -q"
         self.spec = script.get(key) or script.get(argv[1]) or {"rc": 0}
         if callable(self.spec):
             self.spec = self.spec(self)

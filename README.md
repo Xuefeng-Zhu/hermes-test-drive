@@ -145,8 +145,10 @@ suggested discarding it.
   timing, decision) in its plugin-data folder.
 * **Credentials.** It reads only the env vars your model route needs and the candidate's declared
   `requires_env`, through `agent.secret_scope`, to check availability and pass them to the sandbox child of a
-  drive you approved. The full selected model and matching provider configuration blocks are written into the sandbox's
-  0600 `config.yaml` for the run; either block can contain a literal API key. Cleanup is attempted afterwards. It never reads `.env`,
+  drive you approved. The selected model and matching provider configuration blocks are written into the sandbox's
+  0600 `config.yaml` for the run with every literal credential field (`api_key`, tokens, secrets) removed;
+  keys reach the child only as env vars. If your key is only written literally in `config.yaml`, test-drive
+  refuses and asks you to set `sandbox_key_env`. Cleanup is attempted afterwards. It never reads `.env`,
   `auth.json` or token files.
 * **Background work.** A short-lived thread warms the catalog cache after the first message of a
   session, so a nudge never waits on the network. There are no long-running processes.

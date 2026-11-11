@@ -444,3 +444,40 @@ def test_unknown_evidence_is_not_reported_as_no_tool_use(plugin):
     assert "did not call" not in text and "did not earn" not in text
     assert plugin.state.data["drives"][-1]["plugin_tools_used"] is None
     assert "tool-use evidence unavailable" in cmd(plugin, "history")
+
+
+def test_approval_prompt_shows_request_excerpt(plugin):
+    hook = plugin.hooks["pre_tool_call"]
+    req = "Compare\n\nGermany and Japan " + "x" * 400
+    msg = hook(tool_name="test_drive_run", args={"plugin": "jalancost", "request": req})["message"]
+    assert 'Request it will run: "Compare Germany and Japan' in msg and "\n" not in msg.split("Request it will run:")[1]
+    assert len(msg.split("Request it will run: ")[1]) <= 203
+    assert "No request given" in hook(tool_name="test_drive_run", args={"plugin": "jalancost"})["message"]
+
+
+def test_slash_approval_message_shows_request(ctx, store, env):
+    td = TestDrive(ctx, store=store, drive_fn=Drives())
+    prep = td.prepare("jalancost", "KL to\nPenang by bus")
+    assert 'Request: "KL to Penang by bus"' in td.approval_message(prep)
+
+
+def test_literal_only_key_is_refused_and_never_copied(ctx, store, monkeypatch):
+    monkeypatch.setattr(TestDrive, "_user_model", lambda self: (
+        {"provider": "custom", "default": "m", "base_url": "https://x/v1", "api_key": "sk-LITERAL"},
+        ("custom", {"api_key": "sk-LITERAL2"})))
+    monkeypatch.setattr(TestDrive, "_registry_keys", staticmethod(lambda p: []))
+    monkeypatch.setattr(TestDrive, "_secret", staticmethod(lambda n: None))
+    drives = Drives()
+    prep = TestDrive(ctx, store=store, drive_fn=drives).prepare("jalancost", "x")
+    assert "literally" in prep["error"] and "sandbox_key_env" in prep["error"]
+    assert "LITERAL" not in str(prep.get("model")) and not drives.calls
+
+
+def test_literal_key_dropped_when_env_key_available(ctx, store, monkeypatch):
+    monkeypatch.setenv("WORK_KEY", "sk-env")
+    monkeypatch.setattr(TestDrive, "_user_model", lambda self: (
+        {"provider": "custom", "default": "m", "base_url": "https://x/v1", "api_key": "sk-LITERAL",
+         "key_env": "WORK_KEY"}, None))
+    monkeypatch.setattr(TestDrive, "_secret", staticmethod(lambda n: __import__("os").environ.get(n)))
+    prep = TestDrive(ctx, store=store, drive_fn=Drives()).prepare("jalancost", "x")
+    assert not prep.get("error") and "api_key" not in prep["model"] and prep["child_env"]["WORK_KEY"] == "sk-env"

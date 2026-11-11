@@ -56,12 +56,12 @@ def test_full_drive_lifecycle(tmp_path, fake_hermes):
     assert out.installed and out.cleanup_ok and not out.error
     assert out.with_plugin.ok and out.with_plugin.output == "Ranked gaps: Evaluating 68…"
     assert out.with_plugin.tools_called == ["culture_gap_analysis"] and out.with_plugin.cost_usd == 0.0004
-    steps = [" ".join(p.argv[1:3]) for p in popen.log]
+    steps = [" ".join(p.argv[1:3])[:7] if p.argv[1:2] == ["chat"] else " ".join(p.argv[1:3]) for p in popen.log]
     assert steps == ["plugins install", "chat -q", "sessions export", "gateway stop"]
     install = popen.log[0]
     assert install.argv == ["hermes", "plugins", "install", "https://github.com/o/plugin", "--ref", "a" * 40, "--enable", "--yes-deps"]
     chat = popen.log[1]
-    assert chat.argv == ["hermes", "chat", "-q", "culture gap DE vs JP", "-Q"]  # -q: single-query, not -z
+    assert chat.argv == ["hermes", "chat", "-qculture gap DE vs JP", "-Q"]  # -q<request>: single-query, not -z; a leading "-" stays the value
     assert chat.kw["stdin"] is subprocess.DEVNULL
     assert chat.kw["env"]["HERMES_HOME"] == out.sandbox and chat.kw["cwd"] == out.sandbox
     if os.name == "posix":
@@ -118,7 +118,7 @@ def test_install_failure_skips_run_and_cleans_up(tmp_path, fake_hermes):
                 install_timeout=30, run_timeout=5, popen=popen, tmp_root=str(tmp_path))
     assert not out.installed and out.with_plugin is None
     assert "install failed (exit 1)" in out.error and "0.99" in out.error
-    assert [" ".join(p.argv[1:3]) for p in popen.log] == ["plugins install", "gateway stop"]
+    assert [" ".join(p.argv[1:3])[:7] if p.argv[1:2] == ["chat"] else " ".join(p.argv[1:3]) for p in popen.log] == ["plugins install", "gateway stop"]
     assert out.cleanup_ok and not os.path.exists(out.sandbox)
 
 
@@ -143,7 +143,7 @@ def test_baseline_then_plugin_sessions_map_in_order(tmp_path, fake_hermes):
     popen = fake_hermes(ok_script(baseline=True))
     out = drive(plugin="p", request="r", hermes=["hermes"], env=ENV, config={}, run_baseline=True,
                 install_timeout=30, run_timeout=20, popen=popen, tmp_root=str(tmp_path))
-    assert [" ".join(p.argv[1:3]) for p in popen.log][:3] == ["chat -q", "plugins install", "chat -q"]
+    assert [" ".join(p.argv[1:3])[:7] if p.argv[1:2] == ["chat"] else " ".join(p.argv[1:3]) for p in popen.log][:3] == ["chat -q", "plugins install", "chat -q"]
     assert out.baseline.tools_called == [] and out.with_plugin.tools_called == ["culture_gap_analysis"]
 
 
@@ -276,3 +276,32 @@ def test_incomplete_transcript_does_not_claim_tool_nonuse(tmp_path, fake_hermes,
     out = drive(plugin="p", request="r", hermes=["hermes"], env=ENV, config={}, run_baseline=False,
                 install_timeout=30, run_timeout=20, popen=fake_hermes(script), tmp_root=str(tmp_path))
     assert not out.with_plugin.evidence_available and not out.with_plugin.tools_called
+
+
+def test_build_config_strips_literal_credentials():
+    from test_drive.sandbox import strip_literal_credentials
+    model = {"provider": "custom", "default": "m", "base_url": "https://x/v1", "api_key": "sk-LITERAL",
+             "key_env": "MY_KEY", "auth_mode": "bearer"}
+    prov = ("custom", {"api_key": "${WORK_LLM_KEY}", "token": "t-LITERAL",
+                       "headers": {"Authorization": "Bearer LITERAL", "X-Title": "hermes"}})
+    cfg = build_config(model, prov)
+    text = str(cfg)
+    assert "LITERAL" not in text
+    assert cfg["model"]["key_env"] == "MY_KEY" and cfg["model"]["auth_mode"] == "bearer"
+    assert cfg["providers"]["custom"]["api_key"] == "${WORK_LLM_KEY}"
+    assert cfg["providers"]["custom"]["headers"]["X-Title"] == "hermes"
+    assert strip_literal_credentials({"api_key": "${A}"})[1] is False
+    assert strip_literal_credentials({"api_key": "sk"})[1] is True
+
+
+def test_chat_passes_request_attached_to_q(monkeypatch):
+    calls = []
+
+    def fake_run(self, label, argv, timeout):
+        calls.append(argv)
+        raise RuntimeError("stop")
+    monkeypatch.setattr(Sandbox, "run", fake_run)
+    obj = Sandbox.__new__(Sandbox)
+    with pytest.raises(RuntimeError):
+        obj.chat("-rf what", 5)
+    assert calls[0][:2] == ["chat", "-q-rf what"]

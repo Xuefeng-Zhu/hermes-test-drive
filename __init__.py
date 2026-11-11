@@ -156,13 +156,17 @@ def register(ctx) -> None:
                 raise ValueError("invalid catalog entry")
         except Exception:
             return {"action": "block", "message": "Could not verify the catalog source and pin; try again or use /testdrive run."}
+        req = str((args or {}).get("request") or "") if isinstance(args, dict) else ""
+        from .core import request_excerpt
+        shown = (f'Request it will run: "{request_excerpt(req)}"' if req.strip()
+                 else "No request given: it will use the request Hermes just failed in this session.")
         pin = f"{entry.repo} @ {entry.sha}" + (f" (subdir {entry.subdir})" if entry.subdir else "")
         identity = json.dumps([entry.repo, entry.sha, entry.subdir], ensure_ascii=False, separators=(",", ":"))
         rule_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return {"action": "approve",
                 "message": (f"test-drive wants to download {name or 'a plugin'} ({pin}) into a throwaway Hermes "
                             "home and run your request there (child Hermes process; dangerous commands "
-                            "denied; cleanup attempted afterwards)."),
+                            "denied; cleanup attempted afterwards). " + shown),
                 "rule_key": f"test-drive:{name}@{rule_digest}"}
 
     ctx.register_hook("pre_tool_call", pre_tool_call)

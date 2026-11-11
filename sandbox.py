@@ -5,10 +5,10 @@ Lifecycle (every step bounded by a timeout, cleanup always runs):
 1. ``mkdtemp`` a 0700 directory and write a minimal ``config.yaml``: the user's model block (and
    the named provider it points at), plus approvals that DENY dangerous commands in single-query
    mode. Nothing else is copied: no memory, sessions, skills, .env, auth.json or other plugins.
-2. Optional baseline: ``hermes chat -q <request> -Q`` before the plugin exists.
+2. Optional baseline: ``hermes chat -q<request> -Q`` before the plugin exists.
 3. ``hermes plugins install <repo>[#subdir] --ref <sha> --enable --yes-deps`` installs the approved
    exact source with Hermes's scanner and dependency admission inside the sandbox home.
-4. ``hermes chat -q <request> -Q`` with the plugin. ``chat -q`` (not ``-z``) is single-query mode,
+4. ``hermes chat -q<request> -Q`` with the plugin. ``chat -q`` (not ``-z``) is single-query mode,
    so a dangerous command in the child is refused, never auto-approved.
 5. ``hermes sessions export --format jsonl -`` to read which tools each run called.
 6. ``hermes gateway stop`` for the per-home runtime the CLI started, a pid-file check that it is
@@ -139,7 +139,57 @@ def model_key_env(model: dict[str, Any], provider_entry: Optional[dict[str, Any]
     return seen
 
 
+_CRED_WORDS = ("key", "token", "secret", "password", "passwd", "auth", "credential", "cookie", "bearer")
+_CRED_SAFE_SUFFIXES = ("_env", "_var", "_type", "_mode", "_url", "_header_name")
+
+
+def _is_env_ref(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().startswith("${") and value.strip().endswith("}")
+
+
+def _is_cred_field(name: str) -> bool:
+    n = str(name).lower()
+    if n.endswith(_CRED_SAFE_SUFFIXES) or n in ("key_env", "api_key_env"):
+        return False
+    return any(w in n for w in _CRED_WORDS)
+
+
+def strip_literal_credentials(block: Any) -> tuple[Any, bool]:
+    """Return a copy of a config block with every literal credential removed, and whether one was.
+
+    A field counts as a credential when its name looks like one (api_key, token, secret, password,
+    Authorization header, ...). Env-var references (``${VAR}``) and ``*_env`` pointers are kept: the
+    child resolves them from the env test-drive passes, so no secret value is written to disk.
+    """
+    if isinstance(block, dict):
+        out: dict[str, Any] = {}
+        found = False
+        for k, v in block.items():
+            if _is_cred_field(k) and not isinstance(v, (dict, list)):
+                if v in (None, "") or _is_env_ref(v):
+                    out[k] = v
+                else:
+                    found = True
+                continue
+            clean, f = strip_literal_credentials(v)
+            found = found or f
+            out[k] = clean
+        return out, found
+    if isinstance(block, list):
+        items, found = [], False
+        for v in block:
+            clean, f = strip_literal_credentials(v)
+            items.append(clean)
+            found = found or f
+        return items, found
+    return block, False
+
+
 def build_config(model: dict[str, Any], provider_entry: Optional[tuple[str, dict[str, Any]]] = None) -> dict[str, Any]:
+    # Defense in depth: never write a literal credential into the sandbox, where the plugin under test can read it.
+    model, _ = strip_literal_credentials(dict(model))
+    if provider_entry:
+        provider_entry = (provider_entry[0], strip_literal_credentials(dict(provider_entry[1]))[0])
     cfg: dict[str, Any] = {
         "model": dict(model),
         # Single-query (-q) children refuse dangerous commands instead of auto-approving them.
@@ -318,7 +368,7 @@ class Sandbox:
 
     # high level --------------------------------------------------------------------------------
     def chat(self, request: str, timeout: float) -> RunResult:
-        step = self.run("chat -q", ["chat", "-q", request, "-Q"], timeout)
+        step = self.run("chat -q", ["chat", f"-q{request}", "-Q"], timeout)
         # -Q prints the session ID to stderr, outside the model's response.
         ids = re.findall(r"(?m)^session_id: ([^\s]+)\s*$", step.stderr)
         session_id = ids[0] if len(ids) == 1 else ""
